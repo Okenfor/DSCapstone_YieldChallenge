@@ -1,0 +1,308 @@
+---
+title: "Sentiment Analysis over Yelp Business Reviews"
+author: "paperezq"
+date: "19 de noviembre de 2015"
+output: pdf_document
+---
+
+#Introduction
+This report aims at describing a set of classifiers in which a review vote or qualification is given based-on a set of words identified on a review. This is part of the Data Science capstone and the dataset used comes from the [Yelp Dataset Challenge](http://www.yelp.com/dataset_challenge). 
+
+With the idea of connecting people to great local business, yelp provides five datasets describing business, checkin information, customers' reviews of businesses, tips and user data.
+
+My question of interest for this project is how well can a tool guess a review's rating from its text alone?. Basically, the idea is measure the how well a classifier performs based-on some positive and negative words from text reviews. Nevertheless, words of other kind of lexicons were used. We will see that the models built used more than positive and negative words.
+
+The following sections describes the analysis made over the reviews dataset in order to build classifiers of punctuations or stars qualifications. In the first section some basic concepts are mentioned. The second section explores tools and methods used over the dataset. An explanation and some performance measures of the classifiers built are describe in the third section. Finally, results are discussed and some conclusions are given.
+
+#Some concepts: Sentiment Analysis
+Natural Language Processing (NLP) is a technology in which text, in a manner of documents, are processed aiming at to find new knowledge and to answer questions related to patterns that can be found. This is also named text mining. Some of the tasks in NLP includes words and sentence tokenazition, prediction on typing words, text classification, information extraction, and some others.
+
+Text mining could be consider an extension of data mining because it includes the use of methods for classification and clustering. Thus, the variables that are likely manipulated in this kind of mining are counts of some words previously identified in a preprocessing step.
+
+Inside this technology, exists a task so called sentiment analysis. This tasks has the challenge of predicting an election or rate based on some texts given by users of a particular matter. i.e. movies reviews, ease of use of an electronic device, qualifications of a service, etc. In sentiment analysis, the use of lexicons is important in order to identify affective states like emotions, attitudes, pleasure, pain, virtue, vice, and so on. For more information, see the coursera of [NLP at standord](https://www.coursera.org/course/nlp).
+
+In the next section, is described the text mining tools and the dataset of lexicons got for this project.
+
+#Data is explored: tools and methods used to get an exploratory data analysis
+
+In order to get a good classifier model for ratings based on text, R tool is appropiate for such as job. The datasets are in json file format. The library _jsonlite_ is suitable for treating this kind of files. Primeraly, jsonlite library has to main functions: [toJSON](http://127.0.0.1:19311/library/jsonlite/help/toJSON) and [fromJSON](http://127.0.0.1:19311/library/jsonlite/help/fromJSON). However, the dataset of reviews is the largest of the five datasets with 1.32GB. Because of its size and in terms of performance, the best function for reading these json files is the __stream_in__ with the name of the file as a parameter. This function lets read the json file faster than the fromJSON function does. Although, it considers a slightly different format.
+
+```{r eval=FALSE}
+#data_business <- stream_in(file("yelp_academic_dataset_business.json"))
+#data_checkin <- stream_in(file("yelp_academic_dataset_checkin.json"))
+data_review <- stream_in(file("yelp_academic_dataset_review.json"))
+#data_tip <- stream_in(file("yelp_academic_dataset_tip.json"))
+#data_user <- stream_in(file("yelp_academic_dataset_user.json"))
+```
+
+The following sections descibres the process of reading, sampling and transforming the dataset.
+
+##Datasets
+The whole Yelp dataset is composed of five data frames in which business, users, reviews, chechins and tips are registered. 
+
+Dataset of business has 15 variables for 61184 observations, many of those with categories and schedules of operation. The checkin dataset is composed of three other dataframes for 45166 observations. Tips dataset is described by texts for each customer, business and date and the likes given for each tip. The users dataset has features of 366715 customers and 11 features. Those features are the votes (funny, useful and cool) made by the customer, the count of reviews, names and list of friends.
+
+This project focus on business reviews dataset. It has for each customer, business and date a text review which will turn our gold mine to be exploited. A summary of this dataset is presented as follows:
+
+```{r}
+s <- dget(file = "summary_data_review.txt")
+s
+```
+Notice that some other covariates exists in the reviews dataset. This features will be used in the model. Features like votes.funny, votes.cool, votes.useful. These last features came in a form of data frame. This means that _jsonlite_ tool read some structures that involves data frames inside another. To reduce this overload of data in memory, the function used to enhanced the reading is __flatten__.When flatten a data frame, the variables of their included data frames becomes part of the main and their names are concatenated with a prefix of their original dataframe name.
+
+```{r eval=FALSE}
+#flatten data frame to reduce memory and enhance performance
+sDataReview <- flatten(sDataReview)
+#cleaning variable names, removing all punctuation characters
+colnames(sDataReview) <- gsub("[^A-Za-z]", "", colnames(sDataReview))
+```
+
+Summarizing stats of each dataset:
+```{r echo=F}
+sumstats <- data.frame(dataset = c("Reviews", "Business", "Checkin", "Tips", "User"), size_MB = c(1393,53,20,94,159), total_obs= c(1569264,61184,45166,495107,366715), total_vars = c(8,15,3,6,11))
+require(knitr)
+kable(sumstats, format = "latex", booktabs = TRUE)
+```
+
+###Stratified sampling...
+
+with a sample size of 5% over the 1569264 observations, a stratified sample (by class) is created in order to get an analysis and to get faster results, though. The sampling was __without replacement__.
+
+```{r echo=FALSE}
+#Loading data
+data <- read.csv(file = "reviews_processed.csv")
+data <- data[,-1] #except id
+idx1 <- data$stars == 1
+idx2 <- data$stars == 2
+idx3 <- data$stars == 3
+idx4 <- data$stars == 4
+idx5 <- data$stars == 5
+data$stars <- as.factor(make.names((data$stars)))
+```
+
+
+##Text mining tool
+
+A powerful tool to process text in R is __tm__.With tm we can build a corpus in which a set of task can be applied. In linguistics, a corpus (plural corpora) is a large and structured set of texts in which statistical analysis and hypothesis testing can be done.
+
+The following, is a list of some other tools loaded in the project in order to do the sentiment analysis:
+- tm.plugin.sentiment : score of lexicons tool
+- tm.lexicon.GeneralInquirer : Harvard open lexicons
+- SnowballC : stemming tool
+- slam : manipulating term document matrix objects
+- bigmemory :  converting term document matrix objects into matrix
+- stringi : manipulating strings
+
+##Preprocessing
+
+A corpus is loaded from the sample of data reviews previously extracted.
+
+```{r eval=F}
+#header of the corpus
+m <- list(id = "id", content = "text")
+myReader <- readTabular(mapping = m)
+#loading corpus from random sample of reviews
+corpus <- Corpus(DataframeSource(sDataReview), readerControl = list(reader = myReader))
+```
+
+Some functions are defined to get data cleaned from characters that are not in the english alphabet, i.e. just letters. Functions that catch english [stop words](https://en.wikipedia.org/wiki/Stop_words), urls, emails, twitter tags, duplicated quotes, non-ascii characters, non english character, duplicated letters and duplicated words.
+```{r eval=F}
+### preprocessing functions #####
+skipWords <- function(x) removeWords(x, stopwords("english"))
+# removing URLs
+urlPat<-function(x) gsub("(ftp|http)s?:(\\/)+[\\d\\w.]*\\b", " ", x, perl = T)
+# removing Emails
+emailRgx <- "[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+emlPat<-function(x) gsub(emailRgx, " ", x)
+# removing Twitter tags
+tags<-function(x) gsub("(RT )|via", " ", x)
+#replace curly brace with single quote 
+singleQuote <- function(x) gsub("\u2019|`", "'", x, perl = T)
+#replace non printable, except ' - and space with empty string
+nonprint <- function(x) gsub("[^\\p{L}\\s'-]", "", x, perl = T)
+#remove non English words
+nonEng <- function(x) gsub("[^A-Za-z']", " ", x)
+#remove duplicated letters in words
+dupLetters <- function(x) gsub("(\\w)\\1+", "\\1", x, perl = T)
+#remove duplicated consecutive words
+dupWords <- function(x) gsub("(\\w+)\\s+\\1", "\\1", x, perl = T)
+```
+
+At the end, a list of this functions is created and an additional tm function is append in order to [stem words](https://en.wikipedia.org/wiki/Stemming). The latter is done loading the [Snowballc](https://cran.r-project.org/web/packages/SnowballC/index.html) library.
+
+```{r eval=F}
+#list of functions to preprocess the corpus
+funcs <- list(tolower, urlPat, emlPat, tags, singleQuote, nonprint, nonEng, dupLetters, dupWords, removePunctuation, removeNumbers, stripWhitespace, stemDocument, skipWords)
+#cleansing process is done
+rcorpus <- tm_map(corpus, FUN = tm_reduce, tmFuns = funcs)
+#fix a bug of tm library
+rcorpus <- tm_map(rcorpus, PlainTextDocument)
+```
+
+Next, frequent words are identified.
+
+##The wordcloud for each rate
+
+A document term matrix is created. This is also done with a tm function. As control parameters, the set of words to be extracted might be those no larger than 10 characters and with a minimum frequencie of total 50 counts.
+
+```{r eval=F}
+dtm <- DocumentTermMatrix(rcorpus, control = list(wordLengths = c(3,10), minDocFreq=50))
+```
+
+```{r echo=F}
+require(slam)
+pos.terms <- read.csv(file = "pos_terms.csv")
+neg.terms <- read.csv(file = "neg_terms.csv")
+pleasur.terms <- read.csv(file = "pleasur_terms.csv")
+pain.terms <- read.csv(file = "pain_terms.csv")
+feel.terms <- read.csv(file = "feel_terms.csv")
+arousal.terms <- read.csv(file = "arousal_terms.csv")
+emot.terms <- read.csv(file = "emot_terms.csv")
+virtue.terms <- read.csv(file = "virtue_terms.csv")
+vice.terms <- read.csv(file = "vice_terms.csv")
+
+source("GlobalFun.R")
+library(gridExtra)
+
+hpos <- getWordHist(pos.terms, "Positive terms")
+hneg <- getWordHist(neg.terms, "Negative terms")
+hpleasur <- getWordHist(pleasur.terms, "Pleasure terms")
+hpain <- getWordHist(pain.terms, "Pain terms")
+hfeel <- getWordHist(feel.terms, "Feel terms")
+harousal <- getWordHist(arousal.terms, "Arousal terms")
+hemot <- getWordHist(emot.terms, "Emotion terms")
+hvirtue <- getWordHist(virtue.terms, "Virtue terms")
+hvice <- getWordHist(vice.terms, "Vice terms")
+
+grid.arrange( hpos, hneg, hpleasur, 
+              hpain, hfeel, harousal,
+              hemot, hvirtue, hvice,
+              ncol=3)
+```
+
+##Clusters of sentiment words
+
+Hierarchical clustering is applied to the more than 50 frequent words in order to vizualice groups of words in each of the sentiment's groups. A cosine distance is used and counts are normalized.
+
+```{r eval=F,echo=FALSE}
+lapply(terms, plotTreeCluster)
+```
+
+#Building classifiers: how well a tool can predict a 5-star rating based on any review
+
+A dataset is created merging all sentiment words matched above. From these, the most frequent (quantile above 85% of frequencies) are filtered. Finally, the new dataset is merged with the original variables from the reviews dataset, excluding text, ids and type covariates.
+
+```{r eval=F}
+#merging all sentiment words
+all.sentiment <- c(terms_in_General_Inquirer_categories("Positiv"), 
+                   terms_in_General_Inquirer_categories("Negativ"),
+                   terms_in_General_Inquirer_categories("Pleasur"),
+                   terms_in_General_Inquirer_categories("Pain"),
+                   terms_in_General_Inquirer_categories("Feel"),
+                   terms_in_General_Inquirer_categories("Arousal"),
+                   terms_in_General_Inquirer_categories("EMOT"),
+                   terms_in_General_Inquirer_categories("Virtue"),
+                   terms_in_General_Inquirer_categories("Arousal"))
+all.sentiment <- unique(all.sentiment)
+df.terms <- dtm[, dtm$dimnames$Terms %in% all.sentiment]
+
+#filtering words with frequencies above the 85% of the dense probability function (quantile = 85)
+df.terms <- df.terms[,filterByFreq(df.terms, .85)]
+```
+
+For modelling, we take advantage of caret package for the modelling process. It provides a set of functions in which the mining process is divided in cross-validation step, transformation, training algorithms and evaluation. The following sections descibres each step.
+
+##Splitting step
+Because of the dataset size and the number of variables found (316!), some problems arouse like the curse of dimensionality. To face this problem, the use of parallel processing is imperative. For that, we use doSNOW library that is applied by the train function of the caret package (see [parallel processing](http://topepo.github.io/caret/parallel.html)).
+
+So, the dataset is divided into training and testing sets, holding a random sample of 75% of size for the training set.
+
+```{r eval=F}
+##Cross Validation
+set.seed(1234)
+inTrain <- createDataPartition(y=data.fimp$stars, p=3/4, list=FALSE)
+training = data.fimp[inTrain,]
+testing = data.fimp[-inTrain,]
+```
+
+##Some transformations before training
+Before training a model, there is a main issue: curse of dimensionality. To face this problem, near zero variance and less important covariates must be removed. To do that, __klaR__ and __FSelector__ tools must be loaded in order to filter the less important variables: those that are colinear with others (correlated in a manner) and in which the gain of information over the classes (ratings-stars) is the least of all covariates.
+
+```{r eval=F}
+#identifying variables with the lowest variance value
+nzv <- nearZeroVar(data, saveMetrics= TRUE)
+#removing variables with near zero variance
+data.nzv <- data[,-which(names(data) %in% c(rownames(nzv[nzv$nzv,])))]
+##Identifying weights based on information gain for all variables
+weights <- information.gain(stars~., data.nzv)
+#Variables with weights lower than 75% are removed
+subset <- cutoff.k.percent(weights, 0.75)
+data.fimp <- data.nzv[, which(names(data.nzv) %in% c("stars",subset))]
+```
+
+##Training classifiers
+In order to get a competitive model, three types of techniques were compared: naive bayes, penalized discriminant analysis and random forest. An additional model were built but with a different size of sampling because of its performance during the training. This latter model was the linear discriminant analysis with bagging (boostrap aggregated).
+
+```{r echo=F}
+load(file = "nb.RData")
+load(file = "model.pda.RData")
+load(file = "model.rf.RData")
+load(file = "bagLDA.RData")
+```
+
+```{r echo=F}
+summary(model.nb)
+summary(model.rf)
+summary(model.rf)
+summary(bagLDA)
+```
+
+
+##Evaluating trained models
+Naive Bayes
+
+```{r echo=F}
+###Testing models
+test_results.nb <- predict(model.nb, newdata = testing, type = "prob")
+test_results.nb$obs <- as.factor(testing$stars)
+test_results.nb$pred <- predict(model.nb, testing)
+head(test_results.nb)
+multiClassSummary(test_results.nb, lev = levels(test_results.nb$obs))
+```
+
+Random forest
+
+```{r echo=F}
+###Testing models
+test_results.rf <- predict(model.rf, newdata = testing, type = "prob")
+test_results.rf$obs <- as.factor(testing$stars)
+test_results.rf$pred <- predict(model.rf, testing)
+head(test_results.rf)
+multiClassSummary(test_results.rf, lev = levels(test_results.rf$obs))
+```
+
+Penalized Discriminant Analysis
+
+```{r echo=F}
+###Testing models
+test_results.pda <- predict(model.pda, newdata = testing, type = "prob")
+test_results.pda$obs <- as.factor(testing$stars)
+test_results.pda$pred <- predict(model.pda, testing)
+head(test_results.pda)
+multiClassSummary(test_results.pda, lev = levels(test_results.pda$obs))
+```
+
+Linear discriminant analysis with bagging
+
+```{r echo=F}
+###Testing models
+test_results.bagLDA <- predict(bagLDA, newdata = testing, type = "prob")
+test_results.bagLDA$obs <- as.factor(testing$stars)
+test_results.bagLDA$pred <- predict(model.bagLDA, testing)
+head(test_results.bagLDA)
+multiClassSummary(test_results.bagLDA, lev = levels(test_results.bagLDA$obs))
+```
+
+#Results and discussion
+
+#Wrapping up
