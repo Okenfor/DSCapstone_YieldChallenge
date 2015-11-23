@@ -185,7 +185,16 @@ grid.arrange( hpos, hneg, hpleasur,
 Hierarchical clustering is applied to the more than 50 frequent words in order to vizualice groups of words in each of the sentiment's groups. A cosine distance is used and counts are normalized.
 
 ```{r eval=F,echo=FALSE}
-lapply(terms, plotTreeCluster)
+#lapply(terms, plotTreeCluster)
+
+data.terms <- list(#positive = pos.terms, negative = neg.terms,
+                    #     pleasure = pleasur.terms, pain = pain.terms,
+                     #    feel = feel.terms, arousal = arousal.terms,
+                         emotions = emot.terms, virtue = virtue.terms,
+                         vice = vice.terms
+                         )
+source("ShinyCluster.R")
+hc_cluster(data.terms)
 ```
 
 #Building classifiers: how well a tool can predict a 5-star rating based on any review
